@@ -153,6 +153,28 @@ class BracketedSentence(object):
         # find the parse depth of the nearest common ancestor
         return self.depth[i_] + self.depth[j_] - 2*self.depth[nearest]
     
+    def is_relative(self, i, j, order=1, term=True):
+        """Bool, are tokens i and j part of the same subtree? 
+        order determines how far back to look"""
+        
+        if term: # indexing terminal tokens?
+            i = self.word2node[self.terminals[i]]
+            j = self.word2node[self.terminals[j]]
+        else:
+            i = self.word2node[i]
+            j = self.word2node[j]
+        
+        if order==1 and (self.depth[i]!=self.depth[j]):
+            return False # a necessary condition
+        
+        anci = np.array(self.path_to_root([], i)) # these are node indices
+        ancj = np.array(self.path_to_root([], j)) # these are word indices
+        nearest = np.array(anci)[np.isin(anci,ancj)][0]
+        
+        i_to_anc = self.depth[i]-self.depth[nearest]
+        j_to_anc = self.depth[j]-self.depth[nearest]
+        
+        return (i_to_anc<=order)and(j_to_anc<=order)
         
 #%%
 

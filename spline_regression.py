@@ -4,7 +4,7 @@ import scipy.stats as stats
 from sklearn.linear_model import LinearRegression as OLS
 
 #%%
-def spline_covariates(x1, x2, y, num_basis=10, compute_before=False):
+def spline_covariates(x1, x2, y, num_basis=10, compute_before=False, use_residuals=False):
     """
     A non-parametric test for whether x1 predicts y independently of x2.
     
@@ -14,6 +14,7 @@ def spline_covariates(x1, x2, y, num_basis=10, compute_before=False):
         y (n_sample, ): the predicted variable (e.g. CCA)
         num_basis (default 10): number of b-splines
         compute_before (default False): whether to do the regular regression
+        use_residuals (default False): regress on the residuals?
     Out:
         (beta_x1, p_x1): regression coef. w/ associated p-value 
                         of x1 under the model y ~ x1 (if compute_before=True)
@@ -37,16 +38,18 @@ def spline_covariates(x1, x2, y, num_basis=10, compute_before=False):
         bases[:,i] = intrp.BSpline(numpyknots, 
                                    (np.arange(len(these_knots)+2)==i).astype(float), 
                                    3, extrapolate=False)(x2)
-    # concatenate data
-    X = np.append(x1[:,None], bases, axis=1)
-    ols2 = MyOLS(fit_intercept=True)
-    ols2.fit(X,y)
     
-    # ols3 = MyOLS(fit_intercept=True)
-    # ols3.fit(bases,y)
-    # pred = (ols3.coef_@bases.T)
-    # ols3.fit(x1[:,None], y-pred)
-    
+    if use_residuals:
+        ols2 = MyOLS(fit_intercept=True)
+        ols2.fit(bases,y)
+        pred = (ols2.coef_@bases.T)
+        ols2.fit(x1[:,None], y-pred)
+    else:
+        # concatenate data
+        X = np.append(x1[:,None], bases, axis=1)
+        ols2 = MyOLS(fit_intercept=True)
+        ols2.fit(X,y)
+        
     if compute_before:
         return  (ols.coef_[0], ols.p[0,0]), (ols2.coef_[0], ols2.p[0,0])
     else:

@@ -66,10 +66,10 @@ if not os.path.isdir(SAVE_DIR+svfolder):
     os.makedirs(SAVE_DIR+svfolder)
 
 #%%
-# N = 2
 bsz = 20
 nepoch = 40
 encoder = nn.Linear(768, N, bias=False)
+# hype = True
 hype = False
 
 with open('/om3/group/chung/cca/datasets/permuted_phrases/swapped_data.pkl', 'rb') as dfile:
@@ -83,12 +83,12 @@ else:
 # probe = EuclideanEncoder(encoder)
 # probe = CartesianHyperboloid(encoder)
 if hype:
-    probe = GeodesicCoordinates(encoder)
+    probe = GeodesicCoordinates(encoder, max_norm=20.0, norm_type=2)
     init = probe.normalize(2*1e-3*(torch.rand(768, N+1)-0.5))
     probe.enc.weight.data = probe.invchart(init)
     lr = 1e-4  # same parameters as Hewitt and Manning
     optimizer = optim.SGD(probe.parameters(),lr)
-    burnin = 10
+    burnin = 20
 else:
     probe = EuclideanEncoder(encoder)
     lr = 1e-3  # same parameters as Hewitt and Manning
@@ -102,6 +102,9 @@ else:
 
 #%% Train
 layer = 8
+# criterion = nn.MSELoss(reduction='mean')
+# criterion = nn.L1Loss(reduction='mean')
+criterion = nn.PoissonNLLLoss(reduction='mean', log_input=False)
 
 within_range = [i for i in range(len(dist)) if (len(dist[i][0])>=10)&(len(dist[i][0])<=110)]
 train_set = within_range[:int(2*len(within_range)/3)]
@@ -149,7 +152,7 @@ for epoch in range(nepoch):
         except FileNotFoundError:
             print('Skipping line %d, doesn"t exist'%line_idx)
             continue
-            
+        
         toks = np.arange(sentence.ntok)
         ntok = sentence.ntok
         w1, w2 = np.nonzero(np.triu(np.ones((ntok,ntok)),k=1))
@@ -167,14 +170,15 @@ for epoch in range(nepoch):
             
         dT = torch.tensor(distances[line_idx]).float()
         
-        loss = nn.L1Loss(reduction='mean')(dB, dT.expand_as(dB))
+        loss = criterion(dB, dT.expand_as(dB))
         running_loss += loss.item()
-        
-        naan = not (torch.all(probe.enc.weight.data==probe.enc.weight.data) or torch.all(W1==W1))
+        naan = not (torch.all(probe.enc.weight.data==probe.enc.weight.data) and loss.item()==loss.item())
         if naan: # Contains NaN
             # probe.load_state_dict(prev_weights)
+            print(W1)
+            print(dB)
+            print(loss)
             print('Oops, NaN! at %d epochs'%epoch)
-            naan = True
             break
         else:
             prev_weights = probe.state_dict()
@@ -195,20 +199,25 @@ for epoch in range(nepoch):
             
     # train_loss[epoch] = running_loss/(line_idx+1)
     print('Epoch %d: loss=%.3f'%(epoch, running_loss/(line_idx+1)))
-    scheduler.step(running_loss/(line_idx+1))
+    if not hype:
+        scheduler.step(running_loss/(line_idx+1))
 
 
 folder = probe.__class__.__name__ + '/'
 if not os.path.isdir(SAVE_DIR+svfolder+folder):
     os.makedirs(SAVE_DIR+svfolder+folder)
 
-np.save(open(SAVE_DIR+svfolder+folder+'layer%d_rank%d_linear_train_idx.npy'%(layer, N),'wb'),train_set)
-np.save(open(SAVE_DIR+svfolder+folder+'layer%d_rank%d_linear_test_idx.npy'%(layer, N),'wb'),test_set)
+expinf = 'layer%d_rank%d_%s_linear'%(layer, N, criterion.__class__.__name__)
 
-with open(SAVE_DIR+svfolder+folder+'layer%d_rank%d_linear_params.pt'%(layer, N),'wb') as f:
+np.save(open(SAVE_DIR+svfolder+folder+expinf+'_train_idx.npy','wb'),train_set)
+np.save(open(SAVE_DIR+svfolder+folder+expinf+'_test_idx.npy','wb'),test_set)
+
+with open(SAVE_DIR+svfolder+folder+expinf+'_params.pt','wb') as f:
     torch.save(prev_weights,f)
-np.save(open(SAVE_DIR+svfolder+folder+'layer%d_rank%d_linear_loss.npy'%(layer, N),'wb'),np.array(train_loss))
+np.save(open(SAVE_DIR+svfolder+folder+expinf+'_loss.npy','wb'),np.array(train_loss))
 
+# if naan:
+#     raise
 
 #%% test
 # spr_per_length = np.zeros(100) # lengths {10, ..., 110}
@@ -262,6 +271,6 @@ for line_idx in np.random.permutation(test_set): # range(13):
     
     
 spr_per_length = [sts.spearmanr(dT_test[i], dB_test[i])[0] for i in range(100)]
-np.save(open(SAVE_DIR+svfolder+folder+'layer%d_rank%d_linear_dspr.npy'%(layer, N),'wb'),spr_per_length)
+np.save(open(SAVE_DIR+svfolder+folder+expinf+'_dspr.npy','wb'),spr_per_length)
 
 

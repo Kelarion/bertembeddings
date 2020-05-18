@@ -43,12 +43,16 @@ from sklearn.decomposition import PCA
 from itertools import permutations
 
 #%%
-N = 500
+N = 2
 layer = 8
 # euc = True
 euc = False
-dep = True
-# dep = False
+# dep = True
+dep = False
+
+# criterion = nn.MSELoss(reduction='mean')
+criterion = nn.L1Loss(reduction='mean')
+# criterion = nn.PoissonNLLLoss(reduction='mean', log_input=False)
 
 encoder = nn.Linear(768, N, bias=False)
 
@@ -57,9 +61,11 @@ index_file = 'const_in_dep.npy'
 if dep:
     idx = np.load(SAVE_DIR+index_file).astype(int)
     bracket_file = 'dependency_train_bracketed.txt'
+    fold = 'dep/'
 else:
     idx = np.arange(3001)
     bracket_file = 'train_bracketed.txt'
+    fold = 'const'
     # idx = np.arange(len(dist))
 
 if euc:
@@ -73,14 +79,18 @@ else:
 
 # bracket_file = 'dependency_train_bracketed.txt'
 
+expinf = 'layer%d_rank%d_%s_linear'%(layer, N, criterion.__class__.__name__)
+
 if euc:
-    param_file = 'dep/EuclideanEncoder/layer%d_rank%d_linear_params.pt'%(layer,N)
+    param_file = '/EuclideanEncoder/'+expinf+'_params.pt'
 else:
-    param_file = 'dep/GeodesicCoordinates/layer%d_rank%d_linear_params.pt'%(layer,N)
-probe.load_state_dict(torch.load(SAVE_DIR+param_file))
+    param_file = '/GeodesicCoordinates/'+expinf+'_params.pt'
+probe.load_state_dict(torch.load(SAVE_DIR+fold+param_file))
 
 
-#%%
+    #%%
+means = []
+std = []
 for line_idx in [2]:
     ############## load the sentence
     line_idx_in_file = idx[line_idx]
@@ -119,6 +129,8 @@ for line_idx in [2]:
     
     # tree distance
     dT = torch.tensor([sentence.tree_dist(w1[i],w2[i],term=(not dep)) for i in range(len(w1))]).float()
+    means.append(dT.mean().numpy())
+    std.append(dT.var().numpy())
     
 
 #%%
@@ -127,9 +139,9 @@ wa = probe(torch.tensor(original_vectors[layer,:,:].T)).detach()
 # poinc = wa
 poinc = wa[:,1:]/(1+wa[:,:1])
 
-pos = {i:poinc[sentence.node_names[i],:].numpy() for i in range(sentence.ntok)}
+pos = {i:poinc[sentence.node2word[i],:].numpy() for i in range(sentence.ntok)}
     
-grph = nx.Graph()
+grph = nx.Graph()probe
 grph.add_edges_from(sentence.edges)
 nx.draw_networkx(grph, pos, with_labels=False, node_size=20)
 # plt.scatter(poinc[:,0].detach(),poinc[:,1].detach())
