@@ -141,7 +141,7 @@ poinc = wa[:,1:]/(1+wa[:,:1])
 
 pos = {i:poinc[sentence.node2word[i],:].numpy() for i in range(sentence.ntok)}
     
-grph = nx.Graph()probe
+grph = nx.Graph()
 grph.add_edges_from(sentence.edges)
 nx.draw_networkx(grph, pos, with_labels=False, node_size=20)
 # plt.scatter(poinc[:,0].detach(),poinc[:,1].detach())

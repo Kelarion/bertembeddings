@@ -83,17 +83,19 @@ dfile = SAVE_DIR+'train_bracketed.txt'
 #     dist = pkl.load(dfile)
 
 #%%
-avg_type = 'tril' # only consider precedent words
+# avg_type = 'tril' # only consider precedent words
 # avg_type = 'triu' # only consider subsequent words
-# avg_type = 'full' # only consider subsequent words
+avg_type = 'full' # only consider subsequent words
+include_diag = True
 
-order = 1
-# phrase_type = 'real' 
-phrase_type = 'scramble' 
+order = 2
+phrase_type = 'real' 
+# phrase_type = 'scramble' 
 # phrase_type = 'unreal' 
+phrase_type = 'blocks' 
 # phrase_type = 'all' 
 phrase_window = None
-all_window = None
+all_window = 4
 
 sum_align = []
 sum_attn = []
@@ -125,7 +127,7 @@ for line_idx in np.random.permutation(range(1000)):
             [[sentence.is_relative(i,np.min([j+np.random.randint(0,3), ntok-1]), order=order) \
                            for i in range(ntok)] \
                               for j in range(ntok)])
-        const[np.arange(ntok),np.arange(ntok)]=True # keep diagonal
+        # const += np.tril(const).T + np.triu(const).T
     elif phrase_type == 'all':
         const = np.ones((ntok,ntok))
     
@@ -153,6 +155,14 @@ for line_idx in np.random.permutation(range(1000)):
                                   for j in range(ntok)])
     else:
         win = np.ones((ntok,ntok))
+    
+    if include_diag:
+        const[np.arange(ntok),np.arange(ntok)]=True # keep diagonal
+        win[np.arange(ntok),np.arange(ntok)]=True # keep diagonal
+    else:
+        const[np.arange(ntok),np.arange(ntok)]=False 
+        win[np.arange(ntok),np.arange(ntok)]=False # keep diagonal
+    
     
     dt = [np.nanmax([np.abs(i-j) if sentence.is_relative(i,j,order=order) else np.nan for i in range(j+1)]) \
           for j in range(ntok)]
@@ -196,11 +206,22 @@ for line_idx in np.random.permutation(range(1000)):
 # print(np.sum(d)/np.sum(a))
 alignment = np.stack(sum_align).sum(0)/np.stack(sum_attn).sum(0)
 
-
 #%%
 
+mean_attn_inphrase = (np.stack(sum_align)/np.array(num_in_phrase)[:,None,None])
+mean_attn_local = (np.stack(sum_attn)/np.array(num_pairs)[:,None,None])
 
-
-
+for l in range(12):
+    for h in range(12):
+        n_sub = 12*l + h + 1
+        plt.subplot(12,12,n_sub)
+        plt.hist(mean_attn_inphrase[:,l,h], density=True, alpha=0.7)
+        plt.hist(mean_attn_local[:,l,h], density=True, alpha=0.7)
+        plt.xticks([])
+        plt.yticks([])
+        if h==0:
+            plt.ylabel('Layer %d'%l)
+        if l==11:
+            plt.xlabel('Head %d'%h)
 
 
