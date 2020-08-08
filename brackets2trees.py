@@ -14,7 +14,13 @@ Attributes (most of them):
     parents: array, the parent of each token (is -1 for the root)
     node_span: array, for each token, the index of the token right after its constituent ends
     subtree_order: array, ints, the `order' of each token
-    
+
+Note that attributes which return indices, they index the tokens in the order
+they appear in the bracketed sequence -- for a dependency parse, this doesn't 
+generally match the order in the actualy sentence. It also doesn't match the 
+indices of word in the sentence (which go from 0, ..., num_terminal_tokens).
+To convert between these three indexing coordinates -- the 
+
 Methods (external use):
     tree_dist(i, j, term=True):
         Distance between tokens i and j on the parrse tree, returns an integer
@@ -231,7 +237,7 @@ class BracketedSentence(object):
             phrs = np.where((self.subtree_order!=0)&(self.subtree_order<=order))[0]
         
         phrases = [np.array(range(i+1,self.node_span[i])) for i in phrs]
-        chunks = [self.node2term[p[np.isin(p, self.terminals)]] for p in phrases]
+        chunks = [self.node2term[p[np.isin(p, self.term2word)]] for p in phrases]
         
         return [c for c in chunks if len(c)>=min_length]
     

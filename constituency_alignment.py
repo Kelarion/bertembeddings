@@ -14,6 +14,7 @@ import linecache
 from time import time
 import matplotlib.pyplot as plt
 
+from tqdm import tqdm
 #%%
 def rindex(alist, value):
     return len(alist) - alist[-1::-1].index(value) - 1
@@ -86,13 +87,13 @@ dfile = SAVE_DIR+'train_bracketed.txt'
 # avg_type = 'tril' # only consider precedent words
 # avg_type = 'triu' # only consider subsequent words
 avg_type = 'full' # only consider subsequent words
-include_diag = True
+include_diag = False
 
-order = 2
+order = 1
 phrase_type = 'real' 
 # phrase_type = 'scramble' 
 # phrase_type = 'unreal' 
-phrase_type = 'blocks' 
+# phrase_type = 'blocks' 
 # phrase_type = 'all' 
 phrase_window = None
 all_window = 4
@@ -103,7 +104,7 @@ num_in_phrase = []
 num_pairs = [] # number of pairs we compare, to take averages
 dt_inphrase = [] # distance of words to other words in the same phrase
 t0 = time()
-for line_idx in np.random.permutation(range(1000)):
+for line_idx in tqdm(range(1000)):
     
     line = linecache.getline(dfile, line_idx+1)
     sentence = BracketedSentence(line)
@@ -112,6 +113,11 @@ for line_idx in np.random.permutation(range(1000)):
     # orig = d[0]
     orig = sentence.words
     ntok = sentence.ntok
+    
+    phrs = sentence.phrases(order=order, min_length=1)
+    all_window = np.ceil(max([len(p) for p in phrs])/2)
+    phrase_window = np.ceil(max([len(p) for p in phrs])/2)
+    
     
     # whether to use true phrases
     if phrase_type == 'real':
@@ -146,11 +152,11 @@ for line_idx in np.random.permutation(range(1000)):
     
     if all_window is not None:
         if np.sign(all_window)>0:
-            win = np.array([[np.abs(i-j)<all_window \
+            win = np.array([[np.abs(i-j)<=all_window \
                                for i in range(ntok)] \
                                   for j in range(ntok)])
         else:
-            win = np.array([[np.abs(i-j)>-all_window \
+            win = np.array([[np.abs(i-j)>=-all_window \
                                for i in range(ntok)] \
                                   for j in range(ntok)])
     else:
@@ -201,7 +207,7 @@ for line_idx in np.random.permutation(range(1000)):
     sum_align.append(np.array(d))
     sum_attn.append(np.array(a))
     
-    print('Done with line %d in %.3f seconds'%(line_idx,time()-t0))
+    # print('Done with line %d in %.3f seconds'%(line_idx,time()-t0))
 
 # print(np.sum(d)/np.sum(a))
 alignment = np.stack(sum_align).sum(0)/np.stack(sum_attn).sum(0)

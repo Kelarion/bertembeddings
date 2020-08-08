@@ -172,7 +172,7 @@ for line_idx in np.random.permutation(range(len(dist))): # range(13):
         try:
             if depth:
                 if not dep: # check if within phrase
-                    if sentence.tree_dist(swap_idx[0], swap_idx[1]) == 2:
+                    if sentence.is_relative(swap_idx[0], swap_idx[1], order=1):
                         continue
                 d_tree = sentence.parse_depth(swap_idx[1], term=(not dep))\
                     -sentence.parse_depth(swap_idx[0], term=(not dep))
@@ -181,8 +181,8 @@ for line_idx in np.random.permutation(range(len(dist))): # range(13):
                 d_tree = sentence.tree_dist(swap_idx[0], swap_idx[1], term=(not dep))
         except IndexError as e:
             print(swap_idx)
-            print(sentence.node_names)
-            print(sentence.terminals)
+            print(sentence.word2node)
+            print(sentence.term2word)
             raise e
         
         if d_tree != tree_dist:

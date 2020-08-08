@@ -8,7 +8,7 @@ from brackets2trees import BracketedSentence
 import torch
 import tqdm
 
-from transformers import BertTokenizer, BertModel, BertConfig, AutoConfig, AutoModel
+from transformers import BertTokenizer, BertModel, BertConfig, AutoConfig, AutoModel, AutoTokenizer
 import pickle as pkl
 import numpy as np
 import scipy.linalg as la
@@ -19,7 +19,6 @@ import matplotlib.pyplot as plt
 #%%
 def rindex(alist, value):
     return len(alist) - alist[-1::-1].index(value) - 1
-
 
 def extract_tensor(text_array, indices=None, num_layers=13, get_attn=False):
     layers = range(num_layers)
@@ -67,7 +66,10 @@ def extract_tensor(text_array, indices=None, num_layers=13, get_attn=False):
 
         concatenated_vectors = np.concatenate(list_of_vectors, 1)
         if indices is not None:
+            # print(concatenated_vectors.shape)
             concatenated_vectors = concatenated_vectors[:, indices].reshape(-1, len(indices))
+            # print(indices)
+            # print(concatenated_vectors.shape)
         layer_vectors.append(concatenated_vectors)
         if get_attn and (layer>0):
             attn_matrices = np.stack(list_of_attn).transpose(1,0,2)
@@ -79,17 +81,17 @@ def extract_tensor(text_array, indices=None, num_layers=13, get_attn=False):
         return np.stack(layer_vectors)
 
 #%%
-random_model = False
+random_model = True
 
 if random_model:
-    # config = AutoConfig.from_pretrained(pretrained_weights, output_hidden_states=True,
-    #                                 output_attentions=args.attention,
-    #                                 cache_dir='pretrained_models')
-    # model = AutoModel.from_config(config)
     model = BertModel(BertConfig(output_hidden_states=True, output_attentions=True))
 else:
-    model = BertModel.from_pretrained('bert-base-cased', output_hidden_states=True, output_attentions=True)
-tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
+    # model = BertModel.from_pretrained('bert-base-cased', output_hidden_states=True)
+    config = AutoConfig.from_pretrained('bert-base-cased', output_hidden_states=True,
+                                    output_attentions=True,
+                                    cache_dir='pretrained_models')
+    model = AutoModel.from_config(config)
+tokenizer = AutoTokenizer.from_pretrained('bert-base-cased', cache_dir='pretrained_models')
 
 dfile = SAVE_DIR+'train_bracketed.txt'
 
@@ -98,7 +100,8 @@ dfile = SAVE_DIR+'train_bracketed.txt'
 
 #%%
 max_num = 300
-these_bounds = [0,1,2,3,4]
+these_n = [1,2,3,4,5,6,7]
+do_shuffling = True
 
 frob = []
 nuc = []
@@ -110,10 +113,10 @@ whichcond = []
 whichswap = []
 norms = []
 
-num_cond = np.zeros(len(these_bounds))
+num_cond = np.zeros(len(these_n))
 t0 = time()
-pbar = tqdm.tqdm(total=max_num*len(these_bounds))
-for line_idx in np.random.permutation(range(5000)[:1000]):
+pbar = tqdm.tqdm(total=max_num*len(these_n))
+for line_idx in np.random.permutation(range(5000)):
     
     line = linecache.getline(dfile, line_idx+1)
     sentence = BracketedSentence(line)
@@ -123,21 +126,26 @@ for line_idx in np.random.permutation(range(5000)[:1000]):
     orig = sentence.words
     ntok = sentence.ntok
     
-    crossings = np.diff(np.abs(sentence.brackets).cumsum()[sentence.term2brak])
-    if not np.any(np.isin(crossings, these_bounds)):
+    valid = np.floor(ntok/np.array(these_n))>2
+    if not np.any(valid):
         continue
     
-    orig_idx = np.array(range(ntok))
+    orig_idx = np.arange(ntok)
     
-    for i,c in enumerate(crossings):
-        if (c not in these_bounds) or (num_cond[c] >= max_num):
+    for c in np.random.choice(np.argwhere(valid).squeeze(), 1):
+        if (num_cond[c] >= max_num):
             continue
         num_cond[c] += 1
         
-        swap_idx = np.array(range(ntok))
-        swap_idx[i+1] = i
-        swap_idx[i] = i+1
-            
+        swap_idx = np.arange(ntok)
+        if do_shuffling:
+            n_pad = int(these_n[c]-np.mod(ntok,these_n[c]))
+            # padded = np.insert(swap_idx.astype(float), 
+            #                    ntok-n_pad-1, 
+            #                    np.ones(n_pad)*np.nan)
+            padded = np.append(swap_idx.astype(float), np.ones(n_pad)*np.nan)
+            swap_idx = np.random.permutation(padded.reshape((-1,these_n[c]))).flatten()
+            swap_idx = swap_idx[~np.isnan(swap_idx)].astype(int)
         swapped = [orig[i] for i in swap_idx]
         
         # real
@@ -154,10 +162,10 @@ for line_idx in np.random.permutation(range(5000)[:1000]):
         inf.append(la.norm(orig_vecs-swap_vecs, np.inf,axis=(1,2))/np.sqrt(ntok))
         avgdist.append(la.norm(orig_vecs-swap_vecs, 2, axis=1).mean(1))
         
-        norms.append(la.norm(np.append(orig_vecs, swap_vecs, -1), 2, -2))
+        norms.append(la.norm(np.append(orig_vecs, swap_vecs, -1), 2, axis=1).mean(1))
         
         whichline.append(line_idx)
-        whichcond.append(c)
+        whichcond.append(these_n[c])
         whichswap.append(np.repeat(len(whichline), ntok))
         
         pbar.update(1)
@@ -166,7 +174,7 @@ for line_idx in np.random.permutation(range(5000)[:1000]):
         break
     # print('Done with line %d in %.3f seconds'%(i,time()-t0))
 
-fold = 'bracket_crossings/full_features/'
+fold = 'ngram_swaps/'
 if random_model:
     fold += 'random_model/'
 
@@ -182,11 +190,10 @@ np.save(open(SAVE_DIR+fold+'_inf.npy','wb'),np.stack(inf))
 np.save(open(SAVE_DIR+fold+'_line_id.npy','wb'),whichline)
 np.save(open(SAVE_DIR+fold+'_num_crossings.npy','wb'), whichcond)
 np.save(open(SAVE_DIR+fold+'_swap_id.npy','wb'), np.concatenate(whichswap))
-np.save(open(SAVE_DIR+fold+'_average_norms.npy','wb'), np.concatenate(norms, -1))
+np.save(open(SAVE_DIR+fold+'_average_norms.npy','wb'), np.stack(norms))
 np.save(open(SAVE_DIR+fold+'_dist_avg.npy','wb'), np.stack(avgdist))
 
-print('Done!')
-
+# print('Done!'
 
 
 

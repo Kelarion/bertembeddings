@@ -60,7 +60,7 @@ nuc_all = np.zeros((13,len(these_tree_distances),len(these_seq_distances),400))
 inf_all = np.zeros((13,len(these_tree_distances),len(these_seq_distances),400))
 
 minswap = 400
-do_cca=True
+do_cca=False
 for i,t in enumerate(these_tree_distances):
     for j,s in enumerate(these_seq_distances):
         fold = 'tree%d-seq%d/'%(t,s)

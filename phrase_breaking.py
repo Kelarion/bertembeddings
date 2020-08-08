@@ -114,7 +114,7 @@ for phrase_type in ['real','imitation']:
         # orig = d[0]
         orig = sentence.words
         ntok = sentence.ntok
-        
+            
         phrase_idx = sentence.phrases(order=order, strict=True)
         if num_phrases is not None:
             if len(phrase_idx)<num_phrases:
@@ -135,7 +135,7 @@ for phrase_type in ['real','imitation']:
             if swap_type == 'within':
                 perm_idx = [np.random.permutation(p) for p in phrase_idx]
                 assert len(np.unique(np.concatenate(perm_idx)))==sum([len(p) for p in perm_idx])
-        
+         
         orig_idx = np.array(range(ntok))
         if swap_type == 'within':
             swap_idx = np.array(range(ntok))

@@ -35,7 +35,7 @@ def spline_covariates(x1, x2, y, num_basis=10, compute_before=False, use_residua
     numpyknots = np.concatenate((buff_0,these_knots,buff_1)) # because??
     bases = np.zeros((x2.shape[0], len(these_knots)+2))
     bases[:,0] = x2
-    for i in range(1,len(these_knots)+3):
+    for i in range(1,len(these_knots)+2):
         bases[:,i] = intrp.BSpline(numpyknots, 
                                    (np.arange(len(these_knots)+2)==i).astype(float), 
                                    3, extrapolate=False)(x2)

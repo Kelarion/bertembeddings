@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 
 #%%
 
-order = 2
+order = 1
 num_phrases = 2
 # swap_type = 'within'
 swap_type = 'among'
