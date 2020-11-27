@@ -1,5 +1,5 @@
-SAVE_DIR = '/home/matteo/Documents/github/bertembeddings/data/'
-CODE_DIR = '/home/matteo/Documents/github/bertembeddings/'
+SAVE_DIR = 'C:/Users/mmall/Documents/github/bertembeddings/data/'
+CODE_DIR = 'C:/Users/mmall/Documents/github/bertembeddings/'
 
 import sys, os
 sys.path.append(CODE_DIR)
@@ -20,8 +20,7 @@ import matplotlib.pyplot as plt
 def rindex(alist, value):
     return len(alist) - alist[-1::-1].index(value) - 1
 
-
-def extract_tensor_attention(text_array, indices=None, num_layers=12, index_i=0, all_attn=False):
+def extract_tensor(text_array, indices=None, num_layers=12, index_i=0, all_attn=False):
     layers = range(num_layers)
     
     word_tokens = []
@@ -35,23 +34,31 @@ def extract_tensor_attention(text_array, indices=None, num_layers=12, index_i=0,
     # Getting torch output
     with torch.no_grad():
         bert_output = model(input_ids)
+        full_z = bert_output[2]
         output_att = bert_output[3]
         output_Z = bert_output[4]
         
     # output_Z: layer, head, nTok, 64
     # output_att: layer, head, nTok, nTok
     # emb: layer, nTok, 768
+    layer_full_vectors = []
     layer_Z_vectors = []
     layer_att = []
     for layer in layers:
+        this_layer_full_z = []
         this_layer_z = []
         this_layer_attn = []
-        for head in range(12):
+        for word_idx in range(len(text_array)):
+            this_word_idx = word_idx + 1
+            
             list_of_Z_vectors = []
             list_of_att_weights = []
-            for word_idx in range(len(text_array)):
-                this_word_idx = word_idx + 1
-                vector_idcs = np.argwhere(np.array(split_word_idx) == this_word_idx).reshape(-1) + 1
+            
+            vector_idcs = np.argwhere(np.array(split_word_idx) == this_word_idx).reshape(-1) + 1
+            token_vector = full_z[layer][0][vector_idcs].mean(0).cpu().reshape(-1, 1).numpy()
+            this_layer_full_z.append(token_vector)
+            
+            for head in range(12):
                 Z_vector = output_Z[layer][0][head][vector_idcs].mean(0).cpu().reshape(-1, 1).numpy()
                 
                 if all_attn:
@@ -81,19 +88,36 @@ def extract_tensor_attention(text_array, indices=None, num_layers=12, index_i=0,
                         list_of_att_weights.append(att_weight)
                 list_of_Z_vectors.append(Z_vector)
                 
-            concatenated_Z_vectors = np.concatenate(list_of_Z_vectors, 1)
-            if indices is not None:
-                concatenated_Z_vectors = concatenated_Z_vectors[:, indices].reshape(-1, len(indices))
+            concatenated_Z_vectors = np.concatenate(list_of_Z_vectors, 1).T
             this_layer_z.append(concatenated_Z_vectors)
-            this_layer_attn.append(list_of_att_weights)
-        layer_Z_vectors.append(this_layer_z)
-        layer_att.append(this_layer_attn)
+            if len(list_of_att_weights)>0:
+                this_layer_attn.append(list_of_att_weights)
+        
+        cat_layer_z = np.stack(this_layer_z)
+        cat_layer_full = np.stack(this_layer_full_z)
+        if indices is not None:
+            cat_layer_z = cat_layer_z[indices, ...]
+            cat_layer_full = cat_layer_full[indices, ...]
             
-    return np.stack(layer_Z_vectors), np.array(layer_att)
+        layer_full_vectors.append(cat_layer_full.transpose((1,0,2)).squeeze())
+        layer_Z_vectors.append(cat_layer_z.transpose((1,0,2)))
+        layer_att.append(this_layer_attn)
+        
+    # full_vecs = np.array(layer_full_vectors).squeeze().transpose((0,2,1))
+    return np.stack(layer_Z_vectors), np.array(layer_att), np.array(layer_full_vectors)
 
 #%%
+random_model = False
+# random_model = True
 
-model = BertModel.from_pretrained('bert-base-cased', output_hidden_states=True, output_attentions=True)
+if random_model:
+    # config = AutoConfig.from_pretrained(pretrained_weights, output_hidden_states=True,
+    #                                 output_attentions=args.attention,
+    #                                 cache_dir='pretrained_models')
+    # model = AutoModel.from_config(config)
+    model = BertModel(BertConfig(output_hidden_states=True, output_attentions=True))
+else:
+    model = BertModel.from_pretrained('bert-base-cased', output_hidden_states=True, output_attentions=True)
 tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
 
 
@@ -107,6 +131,7 @@ max_num = 200
 these_bounds = [0,1,2,3,4,5,6]
 
 frob = []
+frob_full = []
 nuc = []
 inf = []
 csim = []
@@ -115,8 +140,44 @@ whichcond = []
 whichswap = []
 attn = []
 attn_orig = []
+concentration = []
 norms = []
 dist_avg = []
+
+print('Computing mean and variance ...')
+all_vecs = []
+all_full_vecs = []
+for line_idx in np.random.choice(range(5000), 300):
+    
+    line = linecache.getline(dfile, line_idx+1)
+    sentence = BracketedSentence(line)
+    if sentence.ntok<10:
+        continue
+    
+    orig = sentence.words
+    ntok = sentence.ntok
+    
+    orig_idx = np.arange(ntok)
+    
+    swap_idx = np.random.permutation(orig_idx)
+    swapped = [orig[i] for i in swap_idx]
+    
+    orig_vecs, _, orig_full = extract_tensor(orig, indices=orig_idx)
+    swap_vecs, _, swap_full = extract_tensor(swapped, indices=swap_idx)
+    
+    catted = np.append(orig_vecs, swap_vecs, -2)
+    all_vecs.append(catted)
+    all_full_vecs.append(np.append(orig_full, swap_full, -1))
+    
+m = np.concatenate(all_vecs,-2).mean(-2,keepdims=True)
+s = np.concatenate(all_vecs,-2).std(-2,keepdims=True)
+
+m_full = np.concatenate(all_full_vecs,-1).mean(-1,keepdims=True)
+s_full = np.concatenate(all_full_vecs,-1).std(-1,keepdims=True)
+
+# remember:
+# output[0] is activations: layer, head, nTok, 64
+# output[1] is attentions: layer, head, nTok, nTok
 
 num_cond = np.zeros(len(these_bounds))
 t0 = time()
@@ -148,13 +209,14 @@ for line_idx in np.random.permutation(range(5000)[:1000]):
         swapped = [orig[i] for i in swap_idx]
         
         # real
-        orig_vecs, orig_attn = extract_tensor_attention(orig, indices=orig_idx, 
-                                                        index_i=i) # (Layer, Head, 64, Tok)
-        swap_vecs, swap_attn = extract_tensor_attention(swapped, indices=swap_idx,
-                                                        index_i=i)
+        orig_vecs, orig_attn, orig_full = extract_tensor(orig, indices=orig_idx, index_i=i) # (Layer, Head, 64, Tok)
+        swap_vecs, swap_attn, swap_full = extract_tensor(swapped, indices=swap_idx, index_i=i)
         
-        attn.append(np.sum(orig_attn+swap_attn,-1)/4)
+        attn.append(np.sum(swap_attn,-1)/2)
         attn_orig.append(np.sum(orig_attn,-1)/2)
+        
+        orig_vecs_zscore = (orig_vecs-m)/s
+        swap_vecs_zscore = (swap_vecs-m)/s
     
         # orig_centred = orig_vecs-orig_vecs.mean(axis=3, keepdims=True)
         # swap_centred = swap_vecs-swap_vecs.mean(axis=3, keepdims=True)
@@ -162,11 +224,16 @@ for line_idx in np.random.permutation(range(5000)[:1000]):
         # csim.append(np.sum((orig_centred*swap_centred)/normalizer,2))
         csim.append(np.sum((orig_vecs*swap_vecs)/normalizer,axis=(2,3)))
         
-        frob.append(la.norm(orig_vecs-swap_vecs,'fro', axis=(2,3))/np.sqrt(ntok))
-        nuc.append(la.norm(orig_vecs-swap_vecs,'nuc', axis=(2,3))/np.sqrt(ntok))
-        inf.append(la.norm(orig_vecs-swap_vecs, np.inf, axis=(2,3))/np.sqrt(ntok))
-        dist_avg.append(la.norm(orig_vecs-swap_vecs, 2, axis=2).mean(2))
-        norms.append(la.norm(np.append(orig_vecs, swap_vecs, -1), 2, 2).mean(-1))
+        diff = orig_vecs_zscore-swap_vecs_zscore
+        diff_full = (orig_full-swap_full)/s_full
+        frob.append(la.norm(diff,'fro', axis=(2,3))/np.sqrt(np.prod(diff.shape[1:])))
+        frob_full.append(la.norm(diff_full,'fro', axis=(1,2))/np.sqrt(np.prod(diff_full.shape[1:])))
+        
+        nuc.append(la.norm(diff,'nuc', axis=(2,3))/np.sqrt(np.prod(diff.shape[1:])))
+        inf.append(la.norm(diff, np.inf, axis=(2,3))/np.sqrt(np.prod(diff.shape[1:])))
+        dist_avg.append(la.norm(diff, 2, axis=2).mean(2))
+        
+        norms.append(la.norm(np.append(orig_vecs-m, swap_vecs-m, -1), 2, 2).mean(-1))
         
         whichline.append(line_idx)
         whichcond.append(c)
@@ -180,6 +247,10 @@ for line_idx in np.random.permutation(range(5000)[:1000]):
 
 fold = 'bracket_crossings/'
 
+if random_model:
+    fold += 'random_model/'
+    
+
 if not os.path.isdir(SAVE_DIR+fold):
     os.makedirs(SAVE_DIR+fold)
 
@@ -187,12 +258,13 @@ if not os.path.isdir(SAVE_DIR+fold):
 
 np.save(open(SAVE_DIR+fold+'_cosines.npy','wb'),np.stack(csim))
 np.save(open(SAVE_DIR+fold+'_frob.npy','wb'),np.stack(frob))
+np.save(open(SAVE_DIR+fold+'_frob_full.npy','wb'),np.stack(frob_full))
 np.save(open(SAVE_DIR+fold+'_nuc.npy','wb'),np.stack(nuc))
 np.save(open(SAVE_DIR+fold+'_inf.npy','wb'),np.stack(inf))
 np.save(open(SAVE_DIR+fold+'_line_id.npy','wb'),whichline)
 np.save(open(SAVE_DIR+fold+'_num_crossings.npy','wb'), whichcond)
 np.save(open(SAVE_DIR+fold+'_swap_id.npy','wb'), np.concatenate(whichswap))
-np.save(open(SAVE_DIR+fold+'_attn.npy','wb'), np.stack(attn))
+np.save(open(SAVE_DIR+fold+'_attn_swap.npy','wb'), np.stack(attn))
 np.save(open(SAVE_DIR+fold+'_attn_orig.npy','wb'), np.stack(attn_orig))
 np.save(open(SAVE_DIR+fold+'_average_norms.npy','wb'), np.stack(norms))
 np.save(open(SAVE_DIR+fold+'_dist_avg.npy','wb'), np.stack(dist_avg))

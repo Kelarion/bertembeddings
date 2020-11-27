@@ -12,6 +12,8 @@ from transformers import BertTokenizer, BertModel, BertConfig, AutoConfig, AutoM
 import pickle as pkl
 import numpy as np
 import scipy.linalg as la
+from sklearn.decomposition import PCA
+from pwcca import compute_pwcca
 import linecache
 from time import time
 import matplotlib.pyplot as plt
@@ -20,7 +22,7 @@ import matplotlib.pyplot as plt
 def rindex(alist, value):
     return len(alist) - alist[-1::-1].index(value) - 1
 
-def extract_tensor(text_array, indices=None, num_layers=13, get_attn=False, split_words=False):
+def extract_tensor(text_array, indices=None, num_layers=13, get_attn=False):
     layers = range(num_layers)
 
     word_tokens = []
@@ -38,16 +40,7 @@ def extract_tensor(text_array, indices=None, num_layers=13, get_attn=False, spli
         bert_output = rtn[2]
         attn_weight = rtn[3]
         # attn_weight = model(input_ids)[3]
-    if split_words:
-        vecs = np.concatenate(bert_output)[:,1:-1,:].transpose((0,2,1))
-        word_bounds = np.unique(split_word_idx,return_index=True)[1]
-        chunks = np.array(np.split(np.arange(len(split_word_idx)),word_bounds))[1:]
-        if indices is None:
-            unpermute = np.arange(len(split_word_idx))
-        else:
-            unpermute = np.concatenate(chunks[indices])
-        return vecs[:,:,unpermute]
-    
+        
     # Index of sorted line
     layer_vectors = []
     layer_attns = []
@@ -75,10 +68,7 @@ def extract_tensor(text_array, indices=None, num_layers=13, get_attn=False, spli
 
         concatenated_vectors = np.concatenate(list_of_vectors, 1)
         if indices is not None:
-            # print(concatenated_vectors.shape)
             concatenated_vectors = concatenated_vectors[:, indices].reshape(-1, len(indices))
-            # print(indices)
-            # print(concatenated_vectors.shape)
         layer_vectors.append(concatenated_vectors)
         if get_attn and (layer>0):
             attn_matrices = np.stack(list_of_attn).transpose(1,0,2)
@@ -89,9 +79,27 @@ def extract_tensor(text_array, indices=None, num_layers=13, get_attn=False, spli
     else:
         return np.stack(layer_vectors)
 
+def correlate(X, Y):
+    """
+    Pearson correlation of each dimension of X and Y, assuming that the last axis is samples
+    """
+    # N = X.shape[-1]
+
+    cov = np.sum((X-X.mean(-1,keepdims=True))*(Y-Y.mean(-1,keepdims=True)),-1)
+    varx = np.sum((X-X.mean(-1,keepdims=True))**2,-1)
+    vary = np.sum((Y-Y.mean(-1,keepdims=True))**2,-1)
+    
+    return cov/np.sqrt(varx*vary)
+    # cov = np.cov(vecs[0,0,...],vecs[1,0,...])
+    # xx = cov[:768,:768]
+    # yy = cov[768:,768:]
+    # xy = cov[:768,768:]
+    
+    # return np.diag(xy)/np.sqrt(np.diag(xx)*np.diag(yy))
+
 #%%
-random_model = False
-# random_model = True
+# random_model = False
+random_model = True
 
 if random_model:
     # config = AutoConfig.from_pretrained(pretrained_weights, output_hidden_states=True,
@@ -109,10 +117,9 @@ dfile = SAVE_DIR+'train_bracketed.txt'
 #     dist = pkl.load(dfile)
 
 #%%
-max_num = 500
-these_bounds = [0,1,2,3,4,5,6]
-# use_subwords = False
-use_subwords = True
+max_num = 300
+these_bounds = [0,1,2,3,4]
+n_pca = 100
 
 frob = []
 nuc = []
@@ -125,61 +132,38 @@ whichswap = []
 norms = []
 # mean = np.zeros((13,768))
 
-print('Computing mean and variance ...')
-all_vecs = []
-for line_idx in np.random.choice(range(5000), 500):
-    
-    line = linecache.getline(dfile, line_idx+1)
-    sentence = BracketedSentence(line)
-    if sentence.ntok<10:
-        continue
-    
-    orig = sentence.words
-    ntok = sentence.ntok
-    
-    orig_idx = np.arange(ntok)
-    
-    # swap_idx = np.random.permutation(orig_idx)
-    swap_idx = np.arange(ntok)
-    i = np.random.choice(ntok-1)
-    swap_idx[i] = i+1
-    swap_idx[i+1] = i
-    swapped = [orig[i] for i in swap_idx]
-    
-    orig_vecs = extract_tensor(orig, split_words=use_subwords)
-    swap_vecs = extract_tensor(swapped, indices=swap_idx, split_words=use_subwords)
-    
-    catted = np.append(orig_vecs, swap_vecs, -1)
-    # means.append(catted.mean(-1))
-    # var.append(((catted-catted.mean(-1,keepdims=True))**2).mean(-1))
-    all_vecs.append(catted)
-m = np.concatenate(all_vecs,-1).mean(-1,keepdims=True)
-s = np.concatenate(all_vecs,-1).std(-1,keepdims=True)
-
 num_cond = np.zeros(len(these_bounds))
+corrs = [[] for _ in these_bounds]
+cca = [[] for _ in these_bounds]
+# corrs = np.zeros((max_num, len(these_bounds)))
 t0 = time()
-pbar = tqdm.tqdm(total=max_num*len(these_bounds))
-for line_idx in np.random.permutation(range(5000)):
-    
-    line = linecache.getline(dfile, line_idx+1)
-    sentence = BracketedSentence(line)
-    if sentence.ntok<10:
-        continue
-    # orig = d[0]
-    orig = sentence.words
-    ntok = sentence.ntok
-    
-    crossings = np.diff(np.abs(sentence.brackets).cumsum()[sentence.term2brak])
-    if not np.any(np.isin(crossings, these_bounds)):
-        continue
-    
-    orig_idx = np.array(range(ntok))
-    
-    orig_vecs = extract_tensor(orig, split_words=use_subwords)
-    orig_vecs_zscore = (orig_vecs-m)/s
-    
-    for i,c in enumerate(crossings):
-        if (c not in these_bounds) or (num_cond[c] >= max_num):
+pbar = tqdm.tqdm(total=max_num*len(these_bounds), desc='Tree dist 0/%d'%len(these_bounds))
+for dt in these_bounds:
+    pbar.desc = 'Tree dist %d/%d'%(dt,len(these_bounds))
+    vecs = []
+    whichline = []
+    whichswap = []
+    for line_idx in np.random.permutation(range(5000)):
+        
+        line = linecache.getline(dfile, line_idx+1)
+        sentence = BracketedSentence(line)
+        if sentence.ntok<10:
+            continue
+        # orig = d[0]
+        orig = sentence.words
+        ntok = sentence.ntok
+        
+        crossings = np.diff(np.abs(sentence.brackets).cumsum()[sentence.term2brak])
+        these_pairs = np.isin(crossings,dt)
+        if not np.any(these_pairs):
+            continue
+        
+        orig_idx = np.array(range(ntok))
+        
+        i = np.random.choice(np.where(these_pairs)[0])
+        c = crossings[i]
+        # for i,c in zip(np.where(these_pairs)[0],crossings[these_pairs]):
+        if (num_cond[c] >= max_num):
             continue
         num_cond[c] += 1
         
@@ -190,39 +174,41 @@ for line_idx in np.random.permutation(range(5000)):
         swapped = [orig[i] for i in swap_idx]
         
         # real
-        swap_vecs = extract_tensor(swapped, indices=swap_idx, split_words=use_subwords)
+        orig_vecs = extract_tensor(orig, indices=orig_idx)
+        swap_vecs = extract_tensor(swapped, indices=swap_idx)
         
-        swap_vecs_zscore = (swap_vecs-m)/s
-        
-        diff = orig_vecs_zscore-swap_vecs_zscore
-        
-        orig_centred = orig_vecs-m  #orig_vecs.mean(axis=2, keepdims=True)
-        swap_centred = swap_vecs-m  #swap_vecs.mean(axis=2, keepdims=True)
-        normalizer = (la.norm(orig_centred,2,1,keepdims=True)*la.norm(swap_centred,2,1,keepdims=True))
-        csim.append(np.sum((orig_centred*swap_centred)/normalizer,1))
-        
-        frob.append(la.norm(diff,'fro',axis=(1,2))/np.sqrt(np.prod(diff.shape[1:])))
-        nuc.append(la.norm(diff,'nuc',axis=(1,2))/np.sqrt(np.prod(diff.shape[1:])))
-        inf.append(la.norm(diff, np.inf,axis=(1,2))/np.sqrt(np.prod(diff.shape[1:])))
-        avgdist.append(la.norm(diff, 2, axis=1).mean(1))
-        
-        norms.append(la.norm(np.append(orig_centred, swap_centred, -1), 2, -2))
-        
+        vecs.append([orig_vecs,swap_vecs])
         # mean += np.append(orig_centred, swap_centred, -1).sum(-1)
         
         whichline.append(line_idx)
-        whichcond.append(c)
+        # whichcond.append(c)
         whichswap.append(np.repeat(len(whichline), ntok))
         
         pbar.update(1)
+         
+        if (num_cond[c] >= max_num):
+            break
     
-    if np.all(num_cond >= max_num):
-        break
-    # print('Done with line %d in %.3f seconds'%(i,time()-t0))
+    vecs = np.concatenate(vecs,axis=-1)
+    # together = np.append(vecs[0,...], vecs[1,...], axis=-1)
+    
+    # a hack to make sure the matrices aren't rank decifient
+    # n_pca = np.min([np.linalg.matrix_rank(OG[l,:,:]), pca_comp])
+    # pca = PCA(n_components=n_pca)
+    # print('Using %d components'%n_pca)
+    corrs[dt].append(correlate(vecs[0,...],vecs[1,...]))
+    cca_corr = []
+    for l in range(13):
+        # pca.fit(together[l,...].T)
+        # M1 = pca.transform(vecs[0,l,...].T).T
+        # M2 = pca.transform(vecs[1,l,...].T).T
+        cca_corr.append(compute_pwcca(vecs[0,l,...],vecs[1,l,...])[0])
+        # ccc.append(correlate(M1,M2))
+    cca[dt].append(cca_corr)
+
+#%%
 
 fold = 'bracket_crossings/full_features/'
-if use_subwords:
-    fold += 'using_subwords/'
 if random_model:
     fold += 'random_model/'
 
@@ -236,11 +222,11 @@ np.save(open(SAVE_DIR+fold+'_frob.npy','wb'),np.stack(frob))
 np.save(open(SAVE_DIR+fold+'_nuc.npy','wb'),np.stack(nuc))
 np.save(open(SAVE_DIR+fold+'_inf.npy','wb'),np.stack(inf))
 np.save(open(SAVE_DIR+fold+'_line_id.npy','wb'),whichline)
-np.save(open(SAVE_DIR+fold+'_condition.npy','wb'), whichcond)
+np.save(open(SAVE_DIR+fold+'_num_crossings.npy','wb'), whichcond)
 np.save(open(SAVE_DIR+fold+'_swap_id.npy','wb'), np.concatenate(whichswap))
+np.save(open(SAVE_DIR+fold+'_average_norms.npy','wb'), np.concatenate(norms, -1))
 # np.save(open(SAVE_DIR+fold+'_average_norms.npy','wb'), np.concatenate(norms, -1))
-# np.save(open(SAVE_DIR+fold+'_average_norms.npy','wb'), np.concatenate(norms, -1))
-# np.save(open(SAVE_DIR+fold+'_dist_avg.npy','wb'), np.stack(avgdist))
+np.save(open(SAVE_DIR+fold+'_dist_avg.npy','wb'), np.stack(avgdist))
 
 print('Done!')
 

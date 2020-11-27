@@ -1,5 +1,5 @@
-SAVE_DIR = '/home/matteo/Documents/github/bertembeddings/data/'
-CODE_DIR = '/home/matteo/Documents/github/bertembeddings/'
+SAVE_DIR = 'C:/Users/mmall/Documents/github/bertembeddings/data/'
+CODE_DIR = 'C:/Users/mmall/Documents/github/bertembeddings/'
 
 import sys, os
 sys.path.append(CODE_DIR)
@@ -8,7 +8,7 @@ from brackets2trees import BracketedSentence
 import torch
 import tqdm
 
-from transformers import BertTokenizer, BertModel, BertConfig, AutoConfig, AutoModel
+from transformers import BertTokenizer, BertModel, BertConfig, AutoConfig, AutoModel, AutoTokenizer
 import pickle as pkl
 import numpy as np
 import scipy.linalg as la
@@ -79,7 +79,9 @@ def extract_tensor(text_array, indices=None, num_layers=13, get_attn=False):
         return np.stack(layer_vectors)
 
 #%%
+jon_folder = 'C:/Users/mmall/Documents/github/bertembeddings/data/jonathans/adjacent/'
 random_model = False
+# random_model = True
 
 if random_model:
     # config = AutoConfig.from_pretrained(pretrained_weights, output_hidden_states=True,
@@ -91,10 +93,8 @@ else:
     model = BertModel.from_pretrained('bert-base-cased', output_hidden_states=True, output_attentions=True)
 tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
 
-dfile = SAVE_DIR+'train_bracketed.txt'
 
-# with open(SAVE_DIR+'permuted_data.pkl', 'rb') as dfile:
-#     dist = pkl.load(dfile)
+lines = pkl.load(open(jon_folder+'phrase_boundary_tree_dist.pkl','rb'))
 
 #%%
 max_num = 300
@@ -109,58 +109,95 @@ whichline = []
 whichcond = []
 whichswap = []
 norms = []
+# mean = np.zeros((13,768))
+
+print('Computing mean and variance ...')
+all_vecs = []
+for line_idx in np.random.choice(range(5000), 500):
+    
+    line = lines[line_idx]
+    if len(line[0])<10:
+        continue
+    
+    orig = line[0]
+    ntok = len(orig)
+    
+    orig_idx = np.arange(ntok)
+    
+    # swap_idx = np.random.permutation(orig_idx)
+    swap_idx = np.arange(ntok)
+    i = np.random.choice(ntok-1)
+    swap_idx[i] = i+1
+    swap_idx[i+1] = i
+    swapped = [orig[i] for i in swap_idx]
+    
+    orig_vecs = extract_tensor(orig, indices=orig_idx)
+    swap_vecs = extract_tensor(swapped, indices=swap_idx)
+    
+    catted = np.append(orig_vecs, swap_vecs, -1)
+    # means.append(catted.mean(-1))
+    # var.append(((catted-catted.mean(-1,keepdims=True))**2).mean(-1))
+    all_vecs.append(catted)
+    
+m = np.concatenate(all_vecs,-1).mean(-1,keepdims=True)
+s = np.concatenate(all_vecs,-1).std(-1,keepdims=True)
 
 num_cond = np.zeros(len(these_bounds))
 t0 = time()
 pbar = tqdm.tqdm(total=max_num*len(these_bounds))
-for line_idx in np.random.permutation(range(5000)[:1000]):
+for line_idx in np.random.permutation(range(len(lines))):
     
-    line = linecache.getline(dfile, line_idx+1)
-    sentence = BracketedSentence(line)
-    if sentence.ntok<10:
+    line = lines[line_idx]
+    if len(line[0])<10:
         continue
     # orig = d[0]
-    orig = sentence.words
-    ntok = sentence.ntok
-    
-    crossings = np.diff(np.abs(sentence.brackets).cumsum()[sentence.term2brak])
-    if not np.any(np.isin(crossings, these_bounds)):
-        continue
-    
+    orig = line[0]
+    ntok = len(orig)
+
     orig_idx = np.array(range(ntok))
     
-    for i,c in enumerate(crossings):
-        if (c not in these_bounds) or (num_cond[c] >= max_num):
-            continue
-        num_cond[c] += 1
+    c = line[-1]-2
+    i = line[2][0]
+    if (c not in these_bounds) or (num_cond[c] >= max_num):
+        continue
+    num_cond[c] += 1
+    
+    swap_idx = np.array(range(ntok))
+    swap_idx[i+1] = i
+    swap_idx[i] = i+1
+    
+    swapped = line[1]
+    
+    assert([orig[i] for i in swap_idx] == swapped)
         
-        swap_idx = np.array(range(ntok))
-        swap_idx[i+1] = i
-        swap_idx[i] = i+1
-            
-        swapped = [orig[i] for i in swap_idx]
-        
-        # real
-        orig_vecs = extract_tensor(orig, indices=orig_idx)
-        swap_vecs = extract_tensor(swapped, indices=swap_idx)
-        
-        orig_centred = orig_vecs-orig_vecs.mean(axis=2, keepdims=True)
-        swap_centred = swap_vecs-swap_vecs.mean(axis=2, keepdims=True)
-        normalizer = (la.norm(orig_centred,2,1,keepdims=True)*la.norm(swap_centred,2,1,keepdims=True))
-        csim.append(np.sum((orig_centred*swap_centred)/normalizer,1))
-        
-        frob.append(la.norm(orig_vecs-swap_vecs,'fro',axis=(1,2))/np.sqrt(ntok))
-        nuc.append(la.norm(orig_vecs-swap_vecs,'nuc',axis=(1,2))/np.sqrt(ntok))
-        inf.append(la.norm(orig_vecs-swap_vecs, np.inf,axis=(1,2))/np.sqrt(ntok))
-        avgdist.append(la.norm(orig_vecs-swap_vecs, 2, axis=1).mean(1))
-        
-        norms.append(la.norm(np.append(orig_vecs, swap_vecs, -1), 2, -2))
-        
-        whichline.append(line_idx)
-        whichcond.append(c)
-        whichswap.append(np.repeat(len(whichline), ntok))
-        
-        pbar.update(1)
+    # real
+    orig_vecs = extract_tensor(orig, indices=orig_idx)
+    swap_vecs = extract_tensor(swapped, indices=swap_idx)
+    
+    orig_vecs_zscore = (orig_vecs-m)/s
+    swap_vecs_zscore = (swap_vecs-m)/s
+    
+    diff = orig_vecs_zscore-swap_vecs_zscore
+    
+    orig_centred = orig_vecs-m  #orig_vecs.mean(axis=2, keepdims=True)
+    swap_centred = swap_vecs-m  #swap_vecs.mean(axis=2, keepdims=True)
+    normalizer = (la.norm(orig_centred,2,1,keepdims=True)*la.norm(swap_centred,2,1,keepdims=True))
+    csim.append(np.sum((orig_centred*swap_centred)/normalizer,1))
+    
+    frob.append(la.norm(diff,'fro',axis=(1,2))/np.sqrt(np.prod(diff.shape[1:])))
+    nuc.append(la.norm(diff,'nuc',axis=(1,2))/np.sqrt(np.prod(diff.shape[1:])))
+    inf.append(la.norm(diff, np.inf,axis=(1,2))/np.sqrt(np.prod(diff.shape[1:])))
+    avgdist.append(la.norm(diff, 2, axis=1).mean(1))
+    
+    norms.append(la.norm(np.append(orig_centred, swap_centred, -1), 2, -2))
+    
+    # mean += np.append(orig_centred, swap_centred, -1).sum(-1)
+    
+    whichline.append(line_idx)
+    whichcond.append(c)
+    whichswap.append(np.repeat(len(whichline), ntok))
+    
+    pbar.update(1)
     
     if np.all(num_cond >= max_num):
         break
@@ -174,7 +211,7 @@ if not os.path.isdir(SAVE_DIR+fold):
     os.makedirs(SAVE_DIR+fold)
 
 # pref = '%s_%dorder'%(phrase_type, order)
-    
+
 np.save(open(SAVE_DIR+fold+'_cosines.npy','wb'),np.concatenate(csim,axis=1))
 np.save(open(SAVE_DIR+fold+'_frob.npy','wb'),np.stack(frob))
 np.save(open(SAVE_DIR+fold+'_nuc.npy','wb'),np.stack(nuc))
@@ -183,10 +220,7 @@ np.save(open(SAVE_DIR+fold+'_line_id.npy','wb'),whichline)
 np.save(open(SAVE_DIR+fold+'_num_crossings.npy','wb'), whichcond)
 np.save(open(SAVE_DIR+fold+'_swap_id.npy','wb'), np.concatenate(whichswap))
 np.save(open(SAVE_DIR+fold+'_average_norms.npy','wb'), np.concatenate(norms, -1))
+# np.save(open(SAVE_DIR+fold+'_average_norms.npy','wb'), np.concatenate(norms, -1))
 np.save(open(SAVE_DIR+fold+'_dist_avg.npy','wb'), np.stack(avgdist))
 
 print('Done!')
-
-
-
-

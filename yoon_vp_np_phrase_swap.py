@@ -8,7 +8,7 @@ from brackets2trees import BracketedSentence
 import torch
 import tqdm
 
-from transformers import BertTokenizer, BertModel, BertConfig, AutoConfig, AutoModel
+from transformers import BertTokenizer, BertModel, BertConfig
 import pickle as pkl
 import numpy as np
 import scipy.linalg as la
@@ -59,6 +59,7 @@ def extract_tensor(text_array, indices=None, num_layers=13, get_attn=False, spli
 
             # the average vector for the subword will be used
             vector_idcs = np.argwhere(np.array(split_word_idx) == this_word_idx).reshape(-1) + 1
+            print(vector_idcs.shape)
             token_vector = bert_output[layer][0][vector_idcs].mean(0).cpu().reshape(-1, 1).numpy()
             
             if get_attn and (layer>0):
@@ -103,124 +104,116 @@ else:
     model = BertModel.from_pretrained('bert-base-cased', output_hidden_states=True, output_attentions=True)
 tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
 
-dfile = SAVE_DIR+'train_bracketed.txt'
-
-# with open(SAVE_DIR+'permuted_data.pkl', 'rb') as dfile:
-#     dist = pkl.load(dfile)
+dist = pkl.load(open('C:/Users/mmall/Documents/github/bertembeddings/data/phrase_swaps/permuted_data_np_vp.pkl','rb'))
 
 #%%
-max_num = 500
-these_bounds = [0,1,2,3,4,5,6]
+include_random = True
+# include_random = False
+num_lines = 1000
+
 # use_subwords = False
 use_subwords = True
 
+
+these_lines = np.random.choice(len(dist),num_lines,replace=False)
+# print('Computing mean and variance ...')
+all_vecs = []
+for line_idx in tqdm.tqdm(these_lines):
+    line = dist[line_idx]
+    ntok = len(line[0])
+   
+    if ntok<10:
+        continue
+    # orig = d[0]
+    orig = line[0]
+        
+    orig_idx = np.array(range(ntok))
+    
+    phrase_type = np.random.choice(2)
+    swap_type = np.random.choice(1+include_random)
+    
+    swp_idx = line[1+phrase_type][swap_type][:2]
+    splt_idx = np.concatenate([(s[0],s[1]+1) for s in swp_idx])
+    chunked = np.split(np.arange(ntok),splt_idx)
+    swap_idx = np.concatenate(np.array(chunked)[[0,3,2,1,4]])
+    
+    swapped = [orig[i] for i in swap_idx]
+    
+    # assert(swapped == line[1+phrase_type][swap_type][2])
+    assert([swapped[i] for i in np.argsort(swap_idx)] == orig)
+    
+    # real
+    orig_vecs = extract_tensor(orig, split_words=use_subwords)
+    swap_vecs = extract_tensor(swapped, indices=np.argsort(swap_idx), split_words=use_subwords)
+    
+    all_vecs.append(np.append(orig_vecs, swap_vecs, -1))
+m = np.concatenate(all_vecs,-1).mean(-1,keepdims=True)
+s = np.concatenate(all_vecs,-1).std(-1,keepdims=True)
+
+
+num_swaps = [] # track the number of words swapped in each sentence
+dist_swaps = []
+num_tok = []
 frob = []
 nuc = []
 inf = []
 csim = []
-avgdist = []
 whichline = []
 whichcond = []
-whichswap = []
-norms = []
-# mean = np.zeros((13,768))
 
-print('Computing mean and variance ...')
-all_vecs = []
-for line_idx in np.random.choice(range(5000), 500):
-    
-    line = linecache.getline(dfile, line_idx+1)
-    sentence = BracketedSentence(line)
-    if sentence.ntok<10:
-        continue
-    
-    orig = sentence.words
-    ntok = sentence.ntok
-    
-    orig_idx = np.arange(ntok)
-    
-    # swap_idx = np.random.permutation(orig_idx)
-    swap_idx = np.arange(ntok)
-    i = np.random.choice(ntok-1)
-    swap_idx[i] = i+1
-    swap_idx[i+1] = i
-    swapped = [orig[i] for i in swap_idx]
-    
-    orig_vecs = extract_tensor(orig, split_words=use_subwords)
-    swap_vecs = extract_tensor(swapped, indices=swap_idx, split_words=use_subwords)
-    
-    catted = np.append(orig_vecs, swap_vecs, -1)
-    # means.append(catted.mean(-1))
-    # var.append(((catted-catted.mean(-1,keepdims=True))**2).mean(-1))
-    all_vecs.append(catted)
-m = np.concatenate(all_vecs,-1).mean(-1,keepdims=True)
-s = np.concatenate(all_vecs,-1).std(-1,keepdims=True)
-
-num_cond = np.zeros(len(these_bounds))
 t0 = time()
-pbar = tqdm.tqdm(total=max_num*len(these_bounds))
-for line_idx in np.random.permutation(range(5000)):
+for line_idx in tqdm.tqdm(these_lines):
     
-    line = linecache.getline(dfile, line_idx+1)
-    sentence = BracketedSentence(line)
-    if sentence.ntok<10:
-        continue
-    # orig = d[0]
-    orig = sentence.words
-    ntok = sentence.ntok
+    line = dist[line_idx]
     
-    crossings = np.diff(np.abs(sentence.brackets).cumsum()[sentence.term2brak])
-    if not np.any(np.isin(crossings, these_bounds)):
-        continue
+    orig = line[0]
+    ntok = len(orig)
     
     orig_idx = np.array(range(ntok))
     
     orig_vecs = extract_tensor(orig, split_words=use_subwords)
     orig_vecs_zscore = (orig_vecs-m)/s
     
-    for i,c in enumerate(crossings):
-        if (c not in these_bounds) or (num_cond[c] >= max_num):
-            continue
-        num_cond[c] += 1
+    if include_random:
+        remaining = np.array(line[1:]).reshape(4,-1).tolist()
+    else:
+        remaining = [l[0] for l in line[1:]]
+    
+    for phrase_type, swap_line in enumerate(remaining):
         
-        swap_idx = np.array(range(ntok))
-        swap_idx[i+1] = i
-        swap_idx[i] = i+1
+        swp_idx = swap_line[:2]
+        splt_idx = np.concatenate([(s[0],s[1]+1) for s in swp_idx])
+        chunked = np.split(np.arange(ntok),splt_idx)
+        swap_idx = np.concatenate(np.array(chunked)[[0,3,2,1,4]])
         
-        swapped = [orig[i] for i in swap_idx]
+        swapped = [orig[i] for i in swap_idx]    
+        num_swaps.append(sum(orig_idx!=swap_idx)/2)
+        dist_swaps.append(np.abs(orig_idx-swap_idx).sum()/2)
+        assert(int(np.sum(orig_idx!=swap_idx)/2)>0)
         
-        # real
-        swap_vecs = extract_tensor(swapped, indices=swap_idx, split_words=use_subwords)
+        swap_vecs = extract_tensor(swapped, indices=np.argsort(swap_idx), split_words=use_subwords)
         
         swap_vecs_zscore = (swap_vecs-m)/s
         
         diff = orig_vecs_zscore-swap_vecs_zscore
         
-        orig_centred = orig_vecs-m  #orig_vecs.mean(axis=2, keepdims=True)
-        swap_centred = swap_vecs-m  #swap_vecs.mean(axis=2, keepdims=True)
+        orig_centred = orig_vecs-orig_vecs.mean(axis=2, keepdims=True)
+        swap_centred = swap_vecs-swap_vecs.mean(axis=2, keepdims=True)
         normalizer = (la.norm(orig_centred,2,1,keepdims=True)*la.norm(swap_centred,2,1,keepdims=True))
         csim.append(np.sum((orig_centred*swap_centred)/normalizer,1))
         
         frob.append(la.norm(diff,'fro',axis=(1,2))/np.sqrt(np.prod(diff.shape[1:])))
         nuc.append(la.norm(diff,'nuc',axis=(1,2))/np.sqrt(np.prod(diff.shape[1:])))
         inf.append(la.norm(diff, np.inf,axis=(1,2))/np.sqrt(np.prod(diff.shape[1:])))
-        avgdist.append(la.norm(diff, 2, axis=1).mean(1))
-        
-        norms.append(la.norm(np.append(orig_centred, swap_centred, -1), 2, -2))
-        
-        # mean += np.append(orig_centred, swap_centred, -1).sum(-1)
+        # avgdist.append(la.norm(diff, 2, axis=1).mean(1))
         
         whichline.append(line_idx)
-        whichcond.append(c)
-        whichswap.append(np.repeat(len(whichline), ntok))
+        whichcond.append(phrase_type)
+        num_tok.append(ntok)
         
-        pbar.update(1)
-    
-    if np.all(num_cond >= max_num):
-        break
-    # print('Done with line %d in %.3f seconds'%(i,time()-t0))
+        # print('Done with line %d in %.3f seconds'%(i,time()-t0))
 
-fold = 'bracket_crossings/full_features/'
+fold = 'phrase_swaps/vpnp/'
 if use_subwords:
     fold += 'using_subwords/'
 if random_model:
@@ -229,21 +222,19 @@ if random_model:
 if not os.path.isdir(SAVE_DIR+fold):
     os.makedirs(SAVE_DIR+fold)
 
+pref = ''
 # pref = '%s_%dorder'%(phrase_type, order)
-
-np.save(open(SAVE_DIR+fold+'_cosines.npy','wb'),np.concatenate(csim,axis=1))
-np.save(open(SAVE_DIR+fold+'_frob.npy','wb'),np.stack(frob))
-np.save(open(SAVE_DIR+fold+'_nuc.npy','wb'),np.stack(nuc))
-np.save(open(SAVE_DIR+fold+'_inf.npy','wb'),np.stack(inf))
-np.save(open(SAVE_DIR+fold+'_line_id.npy','wb'),whichline)
-np.save(open(SAVE_DIR+fold+'_condition.npy','wb'), whichcond)
-np.save(open(SAVE_DIR+fold+'_swap_id.npy','wb'), np.concatenate(whichswap))
-# np.save(open(SAVE_DIR+fold+'_average_norms.npy','wb'), np.concatenate(norms, -1))
-# np.save(open(SAVE_DIR+fold+'_average_norms.npy','wb'), np.concatenate(norms, -1))
-# np.save(open(SAVE_DIR+fold+'_dist_avg.npy','wb'), np.stack(avgdist))
+# if num_phrases is not None:
+#     pref += '_%dphrases'%(num_phrases)
+np.save(open(SAVE_DIR+fold+pref+'_cosines.npy','wb'),np.concatenate(csim,axis=1))
+np.save(open(SAVE_DIR+fold+pref+'_frob.npy','wb'),np.stack(frob))
+np.save(open(SAVE_DIR+fold+pref+'_nuc.npy','wb'),np.stack(nuc))
+np.save(open(SAVE_DIR+fold+pref+'_inf.npy','wb'),np.stack(inf))
+np.save(open(SAVE_DIR+fold+pref+'_num_tok.npy','wb'),num_tok)
+np.save(open(SAVE_DIR+fold+pref+'_num_swap.npy','wb'),num_swaps)
+np.save(open(SAVE_DIR+fold+pref+'_dist_swap.npy','wb'),dist_swaps)
+np.save(open(SAVE_DIR+fold+pref+'_line_id.npy','wb'),whichline)
+np.save(open(SAVE_DIR+fold+pref+'_condition.npy','wb'), whichcond)
 
 print('Done!')
-
-
-
 

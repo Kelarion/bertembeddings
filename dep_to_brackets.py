@@ -13,7 +13,7 @@ sys.path.append(CODE_DIR)
 from brackets2trees import BracketedSentence
 
 #%%
-dep = pandas.read_csv(LOAD_DIR+'/train_0-18.txt', delimiter='\t', names=range(10))
+dep = open(LOAD_DIR+'/dependency_train.txt')
 
 tok_num = dep[0].values
 line_num = np.cumsum(np.diff(tok_num, prepend=0)<0)

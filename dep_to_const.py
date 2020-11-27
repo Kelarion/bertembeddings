@@ -4,9 +4,9 @@ import pandas
 
 import socket
 if socket.gethostname() == 'kelarion':
-    CODE_DIR = '/home/matteo/Documents/github/bertembeddings/'
-    SAVE_DIR = '/home/matteo/Documents/github/bertembeddings/'
-    LOAD_DIR = '/home/matteo/Documents/github/bertembeddings/data/extracted'
+    CODE_DIR = 'C:/Users/mmall/Documents/github/bertembeddings/'
+    SAVE_DIR = 'C:/Users/mmall/Documents/github/bertembeddings/data/'
+    LOAD_DIR = 'C:/Users/mmall/Documents/github/bertembeddings/data/extracted/'
 else:    
     CODE_DIR = '/home/malleman/bert_code/'
     LOAD_DIR = '/om3/group/chung/cca/vectors/swapped/bert-base-cased/'
@@ -38,17 +38,24 @@ if not os.path.isdir(SAVE_DIR+svfolder):
 
 #%%
 
-dep = pandas.read_csv(SAVE_DIR+'/train_0-18.txt', delimiter='\t', names=range(10))
+dep = list(open(SAVE_DIR+'/dependency_train_bracketed.txt', 'r'))
 
-tok_num = dep[0].values
-line_num = np.cumsum(np.diff(tok_num, prepend=0)<0)
-tokens = dep[1].values
-sent_length = np.unique(line_num, return_counts=True)[1]
+# tok_num = dep[0].values
+# line_num = np.cumsum(np.diff(tok_num, prepend=0)<0)
+# tokens = dep[1].values
+# sent_length = np.unique(line_num, return_counts=True)[1]
+# sent_length = [BracketedSentence(d,True).ntok for d in dep]
+sent_length = []
+tokens = []
+for d in dep:
+    bs = BracketedSentence(d,True)
+    sent_length.append(bs.ntok)
+    tokens.append(bs.words)
 
 #%%
 const = open(SAVE_DIR+'/train_bracketed.txt','r')
 
-unmatched_lines = list(np.unique(line_num))
+unmatched_lines = list(range(len(dep)))
 idx_in_train = np.zeros(len(unmatched_lines))*np.nan
 for line_idx, line in enumerate(const):
     if line_idx<start:
@@ -56,16 +63,16 @@ for line_idx, line in enumerate(const):
     if line_idx>stop:
         break
     
-    words = BracketedSentence(line[:-1]).words
+    words = BracketedSentence(line).words
     
     # randomly sample 
     possible_lines = [i for i in unmatched_lines if sent_length[i]==len(words)]
     # same_line = [np.all([tokens[line_num==j][i] == words[i] for i in range(len(words))]) for j in possible_lines]
     found = False
     for i in np.random.permutation(possible_lines):
-        sameline = np.all([tokens[line_num==i][j] == words[j] for j in range(len(words))])
-        if sameline:
-            unmatched_lines.pop(i)
+        # sameline = np.all([tokens[i][j] == words[j] for j in range(len(words))])
+        if tokens[i] == words:
+            unmatched_lines.remove(i)
             idx_in_train[i] = line_idx
             found = True
             break
@@ -73,7 +80,7 @@ for line_idx, line in enumerate(const):
         print('Matched line %d!'%line_idx)
     else:
         print('No match for line %d :('%line_idx)
-        print('... it was %d words line, btw'%len(words))    
+        print('... it was %d words, btw'%len(words))    
 
 np.save(SAVE_DIR+svfolder+'/dep_line_idx.npy',idx_in_train)
 

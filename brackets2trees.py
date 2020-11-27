@@ -167,6 +167,9 @@ class BracketedSentence(object):
         self.node2term = np.array([leaves.tolist().index(i) if i in leaves else -1 \
                                    for i in node_names])
         
+        self.node_tags = [w.split(' ')[0] for w in self.nodes]
+        self.pos_tags = list(np.array(self.node_tags)[leaves])
+        
     def __repr__(self):
         return self.bracketed_string
     
@@ -219,6 +222,11 @@ class BracketedSentence(object):
         nearest = np.array(anci)[np.isin(anci,ancj)][0]
         
         return self.depth[i_] + self.depth[j_] - 2*self.depth[nearest]
+    
+    def ancestor_tags(self, i, n=2):
+        i_ = self.word2node[self.term2word[i]]
+        anc = np.array(self.path_to_root([], i_)) # all ancestors
+        return self.node_tags[anc[np.min([n, len(anc)-1])]] # choose the nth one
     
     def phrases(self, order=1, min_length=2, strict=False):
         """

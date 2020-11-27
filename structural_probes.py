@@ -47,7 +47,9 @@ allargs = sys.argv
 
 arglist = allargs[1:]
 
-N = int(allargs[1])
+# N = int(allargs[1])
+layer = int(np.mod(int(allargs[1]),13))
+init = int(allargs[1])//13
 
 tree_type = allargs[2].lower()
 if tree_type=='dep':
@@ -66,6 +68,7 @@ if not os.path.isdir(SAVE_DIR+svfolder):
     os.makedirs(SAVE_DIR+svfolder)
 
 #%%
+N = 100
 bsz = 20
 nepoch = 40
 encoder = nn.Linear(768, N, bias=False)
@@ -101,7 +104,6 @@ else:
 # test_set = list(range(int(2*len(dist)/3), len(dist)))
 
 #%% Train
-layer = 8
 # criterion = nn.MSELoss(reduction='mean')
 # criterion = nn.L1Loss(reduction='mean')
 criterion = nn.PoissonNLLLoss(reduction='mean', log_input=False)
@@ -207,7 +209,7 @@ folder = probe.__class__.__name__ + '/'
 if not os.path.isdir(SAVE_DIR+svfolder+folder):
     os.makedirs(SAVE_DIR+svfolder+folder)
 
-expinf = 'layer%d_rank%d_%s_linear'%(layer, N, criterion.__class__.__name__)
+expinf = 'layer%d_rank%d_init%d_%s_linear'%(layer, N, init, criterion.__class__.__name__)
 
 np.save(open(SAVE_DIR+svfolder+folder+expinf+'_train_idx.npy','wb'),train_set)
 np.save(open(SAVE_DIR+svfolder+folder+expinf+'_test_idx.npy','wb'),test_set)
@@ -266,7 +268,6 @@ for line_idx in np.random.permutation(test_set): # range(13):
     
     # tree distance
     dT = torch.tensor([sentence.tree_dist(w1[i],w2[i],term=(not dep)) for i in range(len(w1))]).float()
-    
     dT_test[len_idx] = np.append(dT_test[len_idx], dT.detach().numpy())
     
     
